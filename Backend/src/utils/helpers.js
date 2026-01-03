@@ -73,3 +73,9 @@ export const getPaginationInfo = (total, page, limit) => {
     pages: Math.ceil(total / limit),
   };
 };
+
+
+export const sanitizeUser = (user) => {
+  const { password, ...sanitizedUser } = user;
+  return sanitizedUser;
+} ;

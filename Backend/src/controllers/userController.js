@@ -1,258 +1,194 @@
 // src/controllers/userController.js
-import prisma from '../config/database.js';
-import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
-import { asyncHandler } from '../middleware/errorHandler.js';
+import userService from '../services/user.service.js';
+import { sanitizeUser } from '../utils/helpers.js';
+import { NotFoundError, ValidationError, ForbiddenError } from '../utils/errors.js';
+import { logger } from '../utils/logger.js';
+import prisma from '../lib/prisma.js';
+import { comparePassword, hashPassword } from '../lib/auth.js';
 
 // ============================================================
-// CREATE USER
+// GET USER PROFILE
 // ============================================================
-export const createUser = asyncHandler(async (req, res) => {
-  const { email, password, firstName, lastName, roleId = 2 } = req.body;
 
-  // Check if user already exists
-  const existingUser = await prisma.user.findUnique({
-    where: { email },
-  });
+export const getUserProfile = async (req, res, next) => {
+  try {
+    const userId = req.params.id ? parseInt(req.params.id) : req.user?.id;
 
-  if (existingUser) {
-    return res.status(409).json({
-      success: false,
-      message: 'User already exists',
+    if (!userId) {
+      throw new ValidationError('User ID is required');
+    }
+
+    // Traveller can only access their own profile, Admin can access any
+    if (req.user.role?.name === 'TRAVELLER' && req.user.id !== userId) {
+      throw new ForbiddenError('You can only access your own profile');
+    }
+
+    const user = await userService.getUserById(userId);
+
+    res.status(200).json({
+      success: true,
+      user: sanitizeUser(user),
     });
+  } catch (err) {
+    logger.error('Failed to get user profile', err.message);
+    next(err);
   }
-
-  // Hash password
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  // Create user
-  const user = await prisma.user.create({
-    data: {
-      email,
-      password: hashedPassword,
-      firstName,
-      lastName,
-      roleId,
-    },
-    include: {
-      role: true,
-    },
-  });
-
-  // Remove password from response
-  const { password: _, ...userWithoutPassword } = user;
-
-  res.status(201).json({
-    success: true,
-    message: 'User created successfully',
-    data: userWithoutPassword,
-  });
-});
+};
 
 // ============================================================
-// GET ALL USERS
+// UPDATE USER PROFILE
 // ============================================================
-export const getAllUsers = asyncHandler(async (req, res) => {
-  const { page = 1, limit = 10, search } = req.query;
-  const skip = (page - 1) * limit;
 
-  const whereClause = search
-    ? {
-        OR: [
-          { email: { contains: search, mode: 'insensitive' } },
-          { firstName: { contains: search, mode: 'insensitive' } },
-          { lastName: { contains: search, mode: 'insensitive' } },
-        ],
-      }
-    : {};
+export const updateUserProfile = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const { bio, location, website, dateOfBirth, phone, firstName, lastName } = req.body;
 
-  const [users, total] = await Promise.all([
-    prisma.user.findMany({
-      where: whereClause,
-      include: {
-        role: true,
+    if (!userId) {
+      throw new ValidationError('User ID is required');
+    }
+
+    // Update user basic info
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        ...(phone && { phone }),
+        ...(firstName && { firstName }),
+        ...(lastName && { lastName }),
       },
-      skip: parseInt(skip),
-      take: parseInt(limit),
-      orderBy: {
-        createdAt: 'desc',
-      },
-    }),
-    prisma.user.count({ where: whereClause }),
-  ]);
-
-  // Remove passwords from response
-  const usersWithoutPasswords = users.map(({ password: _, ...user }) => user);
-
-  res.status(200).json({
-    success: true,
-    data: usersWithoutPasswords,
-    pagination: {
-      total,
-      page: parseInt(page),
-      limit: parseInt(limit),
-      pages: Math.ceil(total / limit),
-    },
-  });
-});
-
-// ============================================================
-// GET USER BY ID
-// ============================================================
-export const getUserById = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  const user = await prisma.user.findUnique({
-    where: { id: parseInt(id) },
-    include: {
-      role: true,
-      profile: true,
-      posts: {
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-      },
-    },
-  });
-
-  if (!user) {
-    return res.status(404).json({
-      success: false,
-      message: 'User not found',
+      include: { role: true, profile: true },
     });
-  }
 
-  const { password: _, ...userWithoutPassword } = user;
+    // Update user profile
+    if (bio || location || website || dateOfBirth) {
+      await userService.updateUserProfile(userId, {
+        bio,
+        location,
+        website,
+        dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+      });
+    }
 
-  res.status(200).json({
-    success: true,
-    data: userWithoutPassword,
-  });
-});
+    logger.info(`User profile updated: ${userId}`);
 
-// ============================================================
-// UPDATE USER
-// ============================================================
-export const updateUser = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { firstName, lastName, phone, avatar } = req.body;
-
-  const user = await prisma.user.update({
-    where: { id: parseInt(id) },
-    data: {
-      firstName,
-      lastName,
-      phone,
-      avatar,
-    },
-    include: {
-      role: true,
-    },
-  });
-
-  const { password: _, ...userWithoutPassword } = user;
-
-  res.status(200).json({
-    success: true,
-    message: 'User updated successfully',
-    data: userWithoutPassword,
-  });
-});
-
-// ============================================================
-// DELETE USER
-// ============================================================
-export const deleteUser = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-
-  await prisma.user.delete({
-    where: { id: parseInt(id) },
-  });
-
-  res.status(200).json({
-    success: true,
-    message: 'User deleted successfully',
-  });
-});
-
-// ============================================================
-// LOGIN
-// ============================================================
-export const loginUser = asyncHandler(async (req, res) => {
-  const { email, password } = req.body;
-
-  const user = await prisma.user.findUnique({
-    where: { email },
-    include: { role: true },
-  });
-
-  if (!user) {
-    return res.status(401).json({
-      success: false,
-      message: 'Invalid credentials',
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      user: sanitizeUser(updatedUser),
     });
+  } catch (err) {
+    logger.error('Failed to update user profile', err.message);
+    next(err);
   }
+};
 
-  const isPasswordValid = await bcrypt.compare(password, user.password);
+// ============================================================
+// UPDATE USER AVATAR
+// ============================================================
 
-  if (!isPasswordValid) {
-    return res.status(401).json({
-      success: false,
-      message: 'Invalid credentials',
+export const updateAvatar = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const { avatar } = req.body;
+
+    if (!userId) {
+      throw new ValidationError('User ID is required');
+    }
+
+    if (!avatar) {
+      throw new ValidationError('Avatar URL is required');
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { avatar },
+      include: { role: true },
     });
+
+    logger.info(`User avatar updated: ${userId}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Avatar updated successfully',
+      user: sanitizeUser(updatedUser),
+    });
+  } catch (err) {
+    logger.error('Failed to update avatar', err.message);
+    next(err);
   }
-
-  const token = jwt.sign(
-    { id: user.id, email: user.email, roleId: user.roleId },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRE }
-  );
-
-  const { password: _, ...userWithoutPassword } = user;
-
-  res.status(200).json({
-    success: true,
-    message: 'Login successful',
-    token,
-    data: userWithoutPassword,
-  });
-});
+};
 
 // ============================================================
 // CHANGE PASSWORD
 // ============================================================
-export const changePassword = asyncHandler(async (req, res) => {
-  const { id } = req.params;
-  const { currentPassword, newPassword } = req.body;
 
-  const user = await prisma.user.findUnique({
-    where: { id: parseInt(id) },
-  });
+export const changePassword = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const { currentPassword, newPassword } = req.body;
 
-  if (!user) {
-    return res.status(404).json({
-      success: false,
-      message: 'User not found',
+    if (!userId) {
+      throw new ValidationError('User ID is required');
+    }
+
+    const user = await userService.getUserById(userId);
+
+    // Verify current password
+    const isMatch = await comparePassword(currentPassword, user.password);
+
+    if (!isMatch) {
+      throw new ValidationError('Current password is incorrect');
+    }
+
+    // Hash new password and update
+    const hashedPassword = await hashPassword(newPassword);
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        password: hashedPassword,
+        refreshToken: null,
+        tokenVersion: { increment: 1 },
+      },
     });
-  }
 
-  const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    logger.info(`Password changed for user: ${userId}`);
 
-  if (!isPasswordValid) {
-    return res.status(401).json({
-      success: false,
-      message: 'Current password is incorrect',
+    res.status(200).json({
+      success: true,
+      message: 'Password changed successfully. Please login again.',
     });
+  } catch (err) {
+    logger.error('Failed to change password', err.message);
+    next(err);
   }
+};
 
-  const hashedPassword = await bcrypt.hash(newPassword, 10);
+// ============================================================
+// DELETE ACCOUNT
+// ============================================================
 
-  await prisma.user.update({
-    where: { id: parseInt(id) },
-    data: { password: hashedPassword },
-  });
+export const deleteAccount = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
 
-  res.status(200).json({
-    success: true,
-    message: 'Password changed successfully',
-  });
-});
+    if (!userId) {
+      throw new ValidationError('User ID is required');
+    }
+
+    await userService.deleteUserAccount(userId);
+
+    res.clearCookie('access_token');
+    res.clearCookie('refresh_token');
+
+    logger.info(`User account deleted: ${userId}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Account deleted successfully',
+    });
+  } catch (err) {
+    logger.error('Failed to delete account', err.message);
+    next(err);
+  }
+};

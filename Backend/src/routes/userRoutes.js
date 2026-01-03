@@ -1,27 +1,41 @@
 // src/routes/userRoutes.js
 import express from 'express';
 import {
-  createUser,
-  getAllUsers,
-  getUserById,
-  updateUser,
-  deleteUser,
-  loginUser,
+  getUserProfile,
+  updateUserProfile,
+  updateAvatar,
   changePassword,
+  deleteAccount,
 } from '../controllers/userController.js';
-import { validateUserInput } from '../middleware/validation.js';
+import { authenticate } from '../middleware/authMiddleware.js';
+import {
+  validateProfileUpdate,
+  validateChangePassword,
+} from '../middleware/validation.js';
 
 const router = express.Router();
 
-// Public routes
-router.post('/register', validateUserInput, createUser);
-router.post('/login', validateUserInput, loginUser);
+// ============================================================
+// PROTECTED ROUTES (Authentication Required)
+// ============================================================
 
-// Protected routes (add authentication middleware in production)
-router.get('/', getAllUsers);
-router.get('/:id', getUserById);
-router.put('/:id', updateUser);
-router.delete('/:id', deleteUser);
-router.put('/:id/change-password', changePassword);
+// Get own profile
+router.get('/profile', authenticate, getUserProfile);
+
+// Get other user's profile (public but authenticated can view)
+router.get('/:id', authenticate, getUserProfile);
+
+// Update profile (own profile)
+router.put('/profile', authenticate, validateProfileUpdate, updateUserProfile);
+
+// Update avatar
+router.put('/avatar', authenticate, updateAvatar);
+
+// Change password
+router.post('/change-password', authenticate, validateChangePassword, changePassword);
+
+// Delete account (self-destructing)
+router.delete('/account', authenticate, deleteAccount);
 
 export default router;
+

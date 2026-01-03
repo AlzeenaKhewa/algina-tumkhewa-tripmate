@@ -19,19 +19,25 @@ model Role {
 }
 
 model User {
-  id        Int          @id @default(autoincrement())
-  email     String       @unique
-  password  String
-  firstName String?
-  lastName  String?
-  phone     String?
-  avatar    String?
-  isActive  Boolean      @default(true)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  roleId    Int
-  profile   UserProfile?
-  role      Role         @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  id           Int          @id @default(autoincrement())
+  email        String       @unique
+  password     String
+  firstName    String?
+  lastName     String?
+  phone        String?
+  avatar       String?
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  roleId       Int
+  isVerified   Boolean      @default(false)
+  language     Language     @default(ENGLISH)
+  otpCode      String?
+  otpExpiresAt DateTime?
+  refreshToken String?
+  tokenVersion Int          @default(0)
+  profile      UserProfile?
+  role         Role         @relation(fields: [roleId], references: [id], onDelete: Cascade)
 
   @@index([roleId])
   @@index([email])
@@ -64,4 +70,9 @@ model AuditLog {
   @@index([entity])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+enum Language {
+  ENGLISH
+  NEPALI
 }

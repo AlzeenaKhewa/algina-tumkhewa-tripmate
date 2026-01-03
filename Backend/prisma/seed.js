@@ -4,7 +4,7 @@ import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool } from "pg";
-import bcrypt from "bcrypt";
+import bcryptjs from "bcryptjs";
 
 // Check env
 if (!process.env.DATABASE_URL) {
@@ -21,10 +21,10 @@ const prisma = new PrismaClient({ adapter });
 async function main() {
   console.log("🌱 Starting seed...");
 
-  // 1️⃣ Seed Roles
+  // 1️⃣ Seed Roles - Only ADMIN and TRAVELLER
   const roles = [
-    { name: "ADMIN", description: "Administrator with full access" },
-    { name: "USER", description: "Regular application user" },
+    { name: "ADMIN", description: "Administrator with full system access" },
+    { name: "TRAVELLER", description: "Regular traveller user" },
   ];
 
   for (const role of roles) {
@@ -37,7 +37,7 @@ async function main() {
   }
 
   // 2️⃣ Create Default Admin User
-  const hashedPassword = await bcrypt.hash("Admin@123", 10);
+  const hashedPassword = await bcryptjs.hash("Admin@123", 10);
 
   const adminUser = await prisma.user.upsert({
     where: { email: "admin@tripmate.com" },
@@ -48,6 +48,10 @@ async function main() {
       firstName: "Tripmate",
       lastName: "Admin",
       phone: "9800000000",
+      isVerified: true,
+      isActive: true,
+      tokenVersion: 0,
+      language: "ENGLISH",
       role: {
         connect: { name: "ADMIN" },
       },
@@ -63,12 +67,46 @@ async function main() {
     update: {},
     create: {
       userId: adminUser.id,
-      bio: "System administrator",
-      location: "Nepal",
     },
   });
 
   console.log(`✔ Admin Profile created`);
+
+  // 4️⃣ Create Sample Traveller User
+  const travellerPassword = await bcryptjs.hash("Traveller@123", 10);
+
+  const travellerUser = await prisma.user.upsert({
+    where: { email: "traveller@tripmate.com" },
+    update: {},
+    create: {
+      email: "traveller@tripmate.com",
+      password: travellerPassword,
+      firstName: "Sample",
+      lastName: "Traveller",
+      phone: "9800000001",
+      isVerified: true,
+      isActive: true,
+      tokenVersion: 0,
+      language: "ENGLISH",
+      role: {
+        connect: { name: "TRAVELLER" },
+      },
+    },
+    include: { role: true },
+  });
+
+  console.log(`✔ Traveller User: ${travellerUser.email} (Role: ${travellerUser.role.name})`);
+
+  // 5️⃣ Create Traveller Profile
+  await prisma.userProfile.upsert({
+    where: { userId: travellerUser.id },
+    update: {},
+    create: {
+      userId: travellerUser.id,
+    },
+  });
+
+  console.log(`✔ Traveller Profile created`);
 
   console.log("🎉 Seeding completed successfully!");
 }
